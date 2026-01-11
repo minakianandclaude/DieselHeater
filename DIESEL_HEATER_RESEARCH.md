@@ -12,9 +12,10 @@
 6. [Sensors and Feedback](#6-sensors-and-feedback)
 7. [Control Parameters](#7-control-parameters)
 8. [Common Failure Modes](#8-common-failure-modes)
-9. [Design Limitations of Stock Controllers](#9-design-limitations-of-stock-controllers)
-10. [Existing DIY Projects](#10-existing-diy-projects)
-11. [Sources](#11-sources)
+9. [Design Constraints for Controller Replacement](#9-design-constraints-for-controller-replacement)
+10. [Design Limitations of Stock Controllers](#10-design-limitations-of-stock-controllers)
+11. [Existing DIY Projects](#11-existing-diy-projects)
+12. [Sources](#12-sources)
 
 ---
 
@@ -66,15 +67,40 @@ Initiates combustion by heating the fuel/air mixture.
 - Cold resistance: Typically 0.6 to 2.0 ohms
 - Used during both startup AND shutdown (for cleaning/burn-off)
 
-### 2.3 Combustion Blower Motor
-Provides precise airflow for combustion.
+### 2.3 Blower Motor Assembly (Dual-Function)
 
-**Specifications:**
+**IMPORTANT: Single Motor, Dual Shaft Architecture**
+
+In most Chinese diesel heaters (and many other brands), a **single motor drives both the combustion blower and cabin air fan**. The motor has a dual-ended shaft with impellers on each end:
+
+```
+[Cabin Air Fan] ←──── [MOTOR] ────→ [Combustion Blower]
+   (cold side)                         (hot side)
+```
+
+**Motor Specifications:**
 - Type: Brushed DC motor with carbon brushes
-- RPM range: ~1450 to 4500+ RPM (depending on model)
+- RPM range: ~1450 to 5000+ RPM (depending on model)
+- Control method: PWM (Pulse Width Modulation)
+- PWM frequency: Typically 16-20 kHz (above audible range)
 - Bearings: Quality units use ball bearings (e.g., NMB/MinebeaMitsumi)
 - Features: Should include EMI suppression filter
-- Critical function: Precise airflow prevents carbon deposits (too little air) or heat issues (too much air)
+
+**Design Implications:**
+| Aspect | Constraint |
+|--------|------------|
+| Speed coupling | Fan RPM and combustion air are mechanically locked together |
+| No independent control | Cannot adjust cabin airflow without affecting combustion |
+| Tuning tradeoff | Changing fan speed directly affects air/fuel ratio |
+| Noise vs. heat | Running quieter (slower) reduces combustion air |
+
+**Critical Function:**
+Precise airflow is essential for complete combustion:
+- Too little air → carbon deposits, smoke, incomplete burn
+- Too much air → reduced efficiency, heat trapped in chamber
+
+**Premium Alternative:**
+Some manufacturers (e.g., Wallas marine heaters) use **separate motors** for each function, allowing independent control - but this adds cost and complexity
 
 ### 2.4 Fuel Metering Pump
 Delivers precise micro-doses of fuel to the combustion chamber.
@@ -103,16 +129,7 @@ Transfers combustion heat to cabin air without mixing exhaust gases.
 - Must withstand temperatures >450°F (232°C) minimum for ignition
 - Combustion can reach ~1600°F internally
 
-### 2.6 Cabin Air Blower
-Circulates heated air into the living space.
-
-**Specifications:**
-- Separate from combustion blower
-- Variable speed control
-- RPM range: ~1450-4500 RPM (model dependent)
-- Power draw: Major contributor to running amperage
-
-### 2.7 Overheat Sensor
+### 2.6 Overheat Sensor
 Critical safety component monitoring combustion chamber temperature.
 
 **Requirements:**
@@ -120,7 +137,7 @@ Critical safety component monitoring combustion chamber temperature.
 - Triggers shutdown if temperature exceeds safe limits
 - Often integrated into the combustion chamber assembly
 
-### 2.8 Exhaust System
+### 2.7 Exhaust System
 - Exhaust pipe with silencer
 - Spiral designs counteract sound waves for noise reduction
 - Must be properly sealed to prevent CO intrusion
@@ -130,25 +147,69 @@ Critical safety component monitoring combustion chamber temperature.
 ## 3. Operating Principles
 
 ### 3.1 Startup Sequence
-1. **Pre-check**: Verify voltage, sensor readings
-2. **Glow plug activation**: 2-5 seconds preheat
-3. **Combustion blower start**: Begin airflow
-4. **Fuel pump activation**: Start fuel delivery at low rate
-5. **Ignition verification**: Confirm flame established
-6. **Transition to run mode**: Glow plug deactivates, normal operation begins
+
+**Total startup duration: ~2-5 minutes**
+
+| Phase | Duration | Current Draw | Description |
+|-------|----------|--------------|-------------|
+| 1. Pre-check | ~1-2 sec | <1A | Verify voltage, test overheat sensor, check glow plug continuity |
+| 2. Glow plug preheat | 30-90 sec | 8-12A | Heat glow plug to ignition temperature (~1000°C) |
+| 3. Fan ramp-up | 10-30 sec | 2-4A | Blower starts slow, gradually increases speed |
+| 4. Fuel delivery | Overlaps | +0.5A | Pump begins clicking, delivering fuel pulses |
+| 5. Ignition attempt | 30-60 sec | 10-14A | Fuel ignites; ECU monitors for temperature rise |
+| 6. Flame stabilization | 30-60 sec | 6-10A | Glow plug may stay on briefly to ensure stable combustion |
+| 7. Run mode transition | - | 1-4A | Glow plug off, normal modulated operation |
+
+**Ignition Verification:**
+- ECU monitors overheat sensor for temperature rise
+- If no temperature increase detected within timeout → E08 error (flame failure)
+- Multiple failed attempts trigger E10 lockout (typically after 6 retries)
+
+**Common Startup Issues:**
+- Air in fuel lines: Pump clicks but no ignition (fuel hasn't reached chamber)
+- Low voltage: Glow plug doesn't reach ignition temperature
+- Undersized wiring: Voltage drop prevents proper glow plug heating
 
 ### 3.2 Running Operation
-- Fuel pump rate modulated based on heat demand (Hz setting)
-- Fan speed adjusted proportionally to fuel rate
-- Linear interpolation between min/max settings
-- Temperature feedback controls duty cycle (on some units)
+
+**Modulated Control:**
+- Fuel pump frequency modulated based on heat demand (1-6 Hz typical)
+- Fan RPM adjusted proportionally via PWM
+- Linear interpolation between min/max settings based on thermostat demand
+
+**Control Loop (Thermostat Mode):**
+```
+IF cabin_temp < (setpoint - hysteresis):
+    Increase fuel/fan toward maximum
+ELIF cabin_temp > (setpoint + hysteresis):
+    Decrease fuel/fan toward minimum OR cycle off
+```
+
+**Power Consumption During Run:**
+
+| Output Level | Fuel Pump (Hz) | Fan RPM | Current Draw |
+|--------------|----------------|---------|--------------|
+| Minimum | 1.0-1.5 | 1500-2000 | 0.5-1.0A |
+| Medium | 2.5-3.5 | 2500-3500 | 1.5-2.5A |
+| Maximum | 5.0-6.0 | 4000-5000 | 3.0-4.0A |
 
 ### 3.3 Shutdown Sequence
-1. **Fuel pump stops**: No more fuel delivery
-2. **Glow plug reactivates**: Burns off residual fuel/carbon (cleaning cycle)
-3. **Blower continues**: Dissipates residual heat
-4. **Cool-down complete**: Blower stops when temperature is safe
-- **CRITICAL**: Never interrupt power during shutdown cycle
+
+**Total shutdown duration: ~3-5 minutes**
+
+| Phase | Duration | Current Draw | Description |
+|-------|----------|--------------|-------------|
+| 1. Fuel pump stop | Immediate | - | No more fuel delivered to combustion chamber |
+| 2. Glow plug reactivation | 60-90 sec | 8-12A | Burns off residual fuel and carbon deposits |
+| 3. Burn-off complete | - | - | Glow plug deactivates |
+| 4. Cool-down | 2-4 min | 1-3A | Fan continues at high speed to dissipate heat |
+| 5. Fan ramp-down | 30-60 sec | <1A | Fan gradually slows as temperature drops |
+| 6. Standby | - | ~0A | System enters low-power standby mode |
+
+**CRITICAL WARNINGS:**
+- **Never interrupt power during shutdown** - incomplete burn-off causes carbon buildup
+- **Never restart immediately** - allow full cool-down cycle to complete
+- Interrupting shutdown can lead to "coking" (carbon deposits blocking combustion chamber)
 
 ### 3.4 Air-to-Fuel Ratio
 - Precise ratio essential for complete combustion
@@ -200,67 +261,188 @@ Critical safety component monitoring combustion chamber temperature.
 ## 5. Communication Protocols
 
 ### 5.1 "Blue Wire" Protocol
-The most common protocol used by Chinese diesel heaters (originally reverse-engineered by Ray Jones).
+The most common protocol used by Chinese diesel heaters (originally reverse-engineered by Ray Jones for the Afterburner project).
 
 **Specifications:**
 - Baud rate: **25,000 bps** (non-standard)
 - Signal type: Single-wire half-duplex serial
 - Logic levels: 5V signaling
-- Interface: TX and RX multiplexed on single wire
+- Interface: TX and RX multiplexed on single wire (time-division)
 - Recommended: 470Ω series resistor for signal integrity
 
 **Hardware Interface (3.3V MCU to 5V bus):**
 - Requires level shifting (e.g., single gates in SOT-23 packages)
 - ESP32 (3.3V) cannot directly interface with 5V bus
+- Typical interface: Two SOT-23 gates for TX/RX multiplexing
 
-### 5.2 Alternative Protocols
-Not all heaters use the Blue Wire protocol:
+### 5.2 Frame Structure (Blue Wire Protocol)
 
-| Brand/Model | Baud Rate | Frame Start |
-|-------------|-----------|-------------|
-| Afterburner-compatible | 25,000 | 0x78 0x16 0x00 |
-| VEVOR (some models) | 4,800 | 0xAA 0x66 0x02 |
+**Request Frame (Controller → Heater):**
+```
+Byte 0:    0x76  - Start of Frame
+Byte 1:    0x16  - Data size (22 bytes follow)
+Bytes 2-23: Command data + checksum
+```
 
-**Note:** Protocol compatibility must be verified before designing a controller.
+**Response Frame (Heater → Controller):**
+```
+Byte 0:    0x76  - Start of Frame
+Byte 1:    0x16  - Data size (22 bytes follow)
+Bytes 2-23: Status data + checksum
+```
 
-### 5.3 Connector Standards
+**Key Data Fields (approximate byte positions):**
+
+| Field | Description |
+|-------|-------------|
+| Heater command | On/Off/Standby state request |
+| Desired temperature | Target thermostat setpoint |
+| Actual temperature | Current cabin temperature reading |
+| Min/Max pump frequency | Fuel pump Hz range settings |
+| Min/Max fan RPM | Blower speed range settings |
+| Operating voltage | Current supply voltage |
+| Run state | Current heater state (startup/run/shutdown/error) |
+| Error state | Active error code (if any) |
+| Glow plug state | On/off status |
+| Runtime counter | Increments while heater is running |
+
+**Checksum Calculation:**
+- Simple sum of all bytes after byte 1 (not CRC)
+- `checksum = sum(bytes[2:]) & 0xFF`
+
+**Command Values:**
+| Value | Command |
+|-------|---------|
+| 0x06 | Turn heater ON |
+| 0x02 | Turn heater OFF |
+
+### 5.3 Alternative Protocols
+
+**WARNING:** Not all Chinese diesel heaters use the Blue Wire protocol!
+
+| Brand/Model | Baud Rate | Frame Start | Notes |
+|-------------|-----------|-------------|-------|
+| Afterburner-compatible | 25,000 | 0x76 0x16 | Most common |
+| Some older units | 25,000 | 0x78 0x16 0x00 | Slight variation |
+| VEVOR (some models) | 4,800 | 0xAA 0x66 0x02 | Completely different protocol |
+
+**Protocol Detection:**
+Before designing a controller, verify protocol compatibility:
+1. Use logic analyzer or oscilloscope on blue wire
+2. Measure baud rate (bit width)
+3. Capture and analyze frame headers
+
+### 5.4 Connector Standards
 - Mk1 Afterburner: 4-way JST-XH (2.54mm pitch)
 - Mk2 Afterburner: 3-way JST-PH (2.0mm pitch)
 - Output termination: 3-way JST-XH (2.54mm pitch)
+
+### 5.5 Protocol Documentation
+For complete byte-by-byte protocol specification, refer to:
+- Ray Jones: "Hacking the Chinese Diesel Heater Communications Protocol V9.pdf"
+- GitHub: `GeneralUltra758/generic-diesel-heater-controller`
+- GitLab: `mrjones.id.au/bluetoothheater`
 
 ---
 
 ## 6. Sensors and Feedback
 
-### 6.1 Temperature Sensor (NTC Thermistor)
+### 6.1 Cabin Temperature Sensor (External NTC Thermistor)
+
+Located on the controller or externally in the cabin space.
 
 **Typical Specifications:**
 - Type: NTC (Negative Temperature Coefficient)
 - Common values: 5kΩ or 10kΩ at 25°C (R25)
 - B-value: 3435K to 3950K (typically 3470K)
-- Temperature range: -55°C to +125°C (sensor) / up to 200°C (some applications)
+- Temperature range: -40°C to +125°C
 - Tolerance: ±1% to ±3%
 - Sensitivity: -3% to -6% resistance change per °C
 
 **Resistance-Temperature Relationship:**
 - Highly non-linear (exponential)
 - Requires linearization in software (Steinhart-Hart equation) or lookup table
-- Example (5K NTC, B=3470):
-  - 0°C: ~16.3kΩ
-  - 25°C: 5.0kΩ
-  - 50°C: ~1.9kΩ
 
-### 6.2 Overheat Sensor
-- Located in combustion chamber
-- Triggers E05 error if temperature exceeds limit
-- May be same type as cabin temp sensor or dedicated thermal switch
+**Example Values (10K NTC, B=3950):**
 
-### 6.3 Flame Detection
-- No dedicated flame sensor in most Chinese units
-- Flame presence inferred from:
-  - Temperature rise rate
-  - Overheat sensor readings
-  - Current draw patterns
+| Temperature | Resistance |
+|-------------|------------|
+| -20°C | ~67 kΩ |
+| 0°C | ~32 kΩ |
+| 20°C | ~12.5 kΩ |
+| 25°C | 10.0 kΩ |
+| 40°C | ~5.3 kΩ |
+
+**Steinhart-Hart Equation:**
+```
+1/T = A + B*ln(R) + C*(ln(R))³
+```
+Where T is temperature in Kelvin, R is resistance.
+
+### 6.2 Body/Overheat Sensor (Internal NTC or Thermal Switch)
+
+Located inside the heater body, monitoring combustion chamber temperature.
+
+**Specifications:**
+- Type: High-temperature NTC thermistor OR thermal cutoff switch
+- Temperature range: Up to 200-300°C
+- Location: Mounted in ceramic enclosure with aluminum heat spreader
+- Response time: Fast enough to detect flame presence/absence
+
+**Functions:**
+1. **Flame detection** - monitors temperature rise during startup
+2. **Overheat protection** - triggers E05 error if temperature exceeds limit
+3. **Shutdown verification** - confirms combustion chamber has cooled
+
+**Premium Units (e.g., VVKB):**
+- Use German Heraeus temperature sensors
+- STM32 microcontroller monitors for unusual temperature changes
+- Digital signal sent to MCU for precise control
+
+### 6.3 Flame Detection Methods
+
+Chinese diesel heaters typically have **no dedicated flame sensor** (unlike gas appliances with ionization probes). Instead, flame presence is inferred:
+
+**Primary Method - Temperature Monitoring:**
+```
+During startup:
+  IF body_temp rises > threshold within timeout:
+    Flame detected → continue to run mode
+  ELSE:
+    Flame failure → E08 error, retry or lockout
+```
+
+**Secondary Methods (some controllers):**
+| Method | How It Works |
+|--------|--------------|
+| Temperature rise rate | Rapid rise indicates successful ignition |
+| Glow plug current | Changes when flame heats the plug |
+| Exhaust temperature | Separate sensor in some premium units |
+
+**Glow Plug as Temperature Sensor:**
+Some advanced systems use glow plug resistance as a temperature indicator:
+- Resistance changes with temperature
+- Can detect flame presence by monitoring current/resistance
+- Requires time-sharing between heating and sensing modes
+
+### 6.4 Voltage Sensing
+
+Built into the ECU to monitor supply voltage:
+
+| Condition | Action |
+|-----------|--------|
+| < 11.4V (12V system) | E01 undervoltage error, shutdown |
+| 11.4V - 15V | Normal operation |
+| > 15V (12V system) | E02 overvoltage error, shutdown |
+
+### 6.5 Sensor Summary
+
+| Sensor | Location | Purpose | Typical Type |
+|--------|----------|---------|--------------|
+| Cabin temp | External/controller | Thermostat feedback | 10K NTC |
+| Body temp | Combustion chamber | Flame detect, overheat | High-temp NTC |
+| Voltage | ECU internal | Power monitoring | Resistor divider |
+| (Optional) Altitude | Controller | Auto fuel adjustment | Barometric pressure |
 
 ---
 
@@ -350,43 +532,91 @@ Not all heaters use the Blue Wire protocol:
 
 ---
 
-## 9. Design Limitations of Stock Controllers
+## 9. Design Constraints for Controller Replacement
 
-### 9.1 User Interface Issues
+Before listing stock controller limitations, it's important to understand the fundamental constraints any replacement controller must work within.
+
+### 9.0 Architectural Constraints
+
+| Constraint | Implication for Design |
+|------------|----------------------|
+| **Single motor, dual shaft** | Cannot independently control cabin airflow and combustion air |
+| **Open-loop fuel system** | Must trust calibrated pump rate; no fuel flow sensor |
+| **No dedicated flame sensor** | Must infer flame from temperature rise rate |
+| **Protocol compatibility** | Must support 25kbps Blue Wire OR replace entire ECU |
+| **Safety-critical operation** | Must handle all error conditions and safe shutdown |
+| **Power interruption risk** | Carbon buildup if shutdown interrupted |
+
+### 9.0.1 Controller Replacement Options
+
+There are two fundamental approaches:
+
+**Option A: Replace Display/Interface Only (Afterburner approach)**
+- Keep stock ECU/motherboard
+- Communicate via Blue Wire protocol
+- Limited to parameters exposed by protocol
+- Safer: stock ECU handles combustion control
+
+**Option B: Full ECU Replacement**
+- Replace entire control system
+- Direct control of glow plug, fuel pump, fan motor
+- Maximum flexibility but maximum responsibility
+- Must implement all safety logic from scratch
+
+### 9.0.2 Key Parameters to Control/Monitor
+
+| Parameter | Control | Monitor | Notes |
+|-----------|---------|---------|-------|
+| On/Off state | ✓ | ✓ | Basic operation |
+| Target temperature | ✓ | ✓ | Thermostat setpoint |
+| Pump frequency (Hz) | ✓ | ✓ | Fuel delivery rate |
+| Fan RPM | ✓ | ✓ | Via PWM duty cycle |
+| Glow plug | ✓ | ✓ | On/off + current sensing |
+| Body temperature | - | ✓ | Flame detection, safety |
+| Cabin temperature | - | ✓ | Thermostat feedback |
+| Supply voltage | - | ✓ | Under/overvoltage protection |
+| Error state | - | ✓ | Diagnostics |
+| Runtime | - | ✓ | Maintenance tracking |
+
+---
+
+## 10. Design Limitations of Stock Controllers
+
+### 10.1 User Interface Issues
 - Small, low-resolution displays
 - Limited menu navigation
 - No remote access (basic models)
 - Poor button tactile feedback
 
-### 9.2 Thermostat Limitations
+### 10.2 Thermostat Limitations
 - Binary on/off cycling (no modulation on basic units)
 - Large temperature swing before cycling
 - No programmable schedules
 - No adaptive learning
 
-### 9.3 Safety Concerns
+### 10.3 Safety Concerns
 - Limited diagnostic information
 - No data logging
 - No trend monitoring for predictive maintenance
 - Fixed shutdown timers
 
-### 9.4 Connectivity
+### 10.4 Connectivity
 - No smartphone integration (basic models)
 - No home automation integration
 - No OTA firmware updates
 - Bluetooth-only (iOS incompatible on many)
 
-### 9.5 Altitude Handling
+### 10.5 Altitude Handling
 - Manual adjustment required
 - No automatic compensation (most units)
 - Settings must be changed when elevation changes
 
-### 9.6 Fuel Monitoring
+### 10.6 Fuel Monitoring
 - No fuel consumption tracking
 - No fuel level awareness
 - Cannot estimate remaining runtime
 
-### 9.7 Operational Modes
+### 10.7 Operational Modes
 - Limited to single heat output curve
 - No quiet/eco modes
 - No boost/rapid heat modes
@@ -394,9 +624,9 @@ Not all heaters use the Blue Wire protocol:
 
 ---
 
-## 10. Existing DIY Projects
+## 11. Existing DIY Projects
 
-### 10.1 Afterburner (Ray Jones)
+### 11.1 Afterburner (Ray Jones)
 **The most comprehensive open-source replacement controller.**
 
 - **Website**: http://www.mrjones.id.au/afterburner/
@@ -413,38 +643,40 @@ Not all heaters use the Blue Wire protocol:
 
 **Note**: Requires "Blue Wire" protocol compatible ECU
 
-### 10.2 ESPHome Integrations
+### 11.2 ESPHome Integrations
 - **cdh-esphome**: https://github.com/daoudeddy/cdh-esphome
 - **Chinese-Diesel-Heater---ESPHome**: https://github.com/timmchugh11/Chinese-Diesel-Heater---ESPHome
 - Enables Home Assistant integration
 - UART configuration: `baud_rate: 25000`
 
-### 10.3 Arduino Thermostat Controller
+### 11.3 Arduino Thermostat Controller
 - **Repository**: https://github.com/wshelley/Chinese-Diesel-Heater-Advanaced-Temperature-Controller
 - Simple inline thermostat add-on
 - Keeps existing controller
 - Arduino Nano based
 - Monitors and overrides power based on temperature
 
-### 10.4 RF Remote Library (ESP32)
+### 11.4 RF Remote Library (ESP32)
 - **Repository**: https://github.com/jakkik/DieselHeaterRF
 - Replicates 433MHz remote protocol
 - Uses CC1101 transceiver
 - Parts cost: <$10 USD
 
-### 10.5 I2C Interface Board
+### 11.5 I2C Interface Board
 - **Repository**: https://github.com/TMakins/CDH_I2C_Interface
 - Exposes heater parameters as I2C registers
 - Enables integration with other microcontrollers
 
 ---
 
-## 11. Sources
+## 12. Sources
 
 ### General Information
 - [VVKB Parking Heaters Buying Guide](https://www.vvkb.com/parking-heaters-buying-guide/)
 - [FIRSTRATE: What Is a Diesel Parking Heater](https://firstratetools.com/what-is-a-diesel-parking-heater-and-how-does-it-work/)
 - [VVKB Diesel Air Heater Guide](https://www.vvkb.com/diesel-air-heater/)
+- [Wallas Marine Heaters](https://wallas.fi/marine-heaters/) - Comparison of single vs. dual motor designs
+- [VVKB Combustion Blower Motor](https://www.vvkb.com/combustion-blower-motor/) - Motor specifications
 
 ### Controller and Protocol Information
 - [Afterburner Official Site](https://www.mrjones.id.au/afterburner/)
@@ -452,12 +684,15 @@ Not all heaters use the Blue Wire protocol:
 - [Experimental Engineering: Afterburner Build](https://www.experimental-engineering.co.uk/2019/07/20/afterburner-aftermarket-diesel-heater-controller-build/)
 - [Van Life UK: Controller and Motherboard Guide](https://www.vanlifeuksurvivorsguide.co.uk/post/chinese-diesel-heater-controller-motherboard-remote-control-guide)
 - [Hackaday.io: VEVOR Protocol](https://hackaday.io/project/195170-vevor-diesel-heater-protocol)
+- [GitHub: Generic Diesel Heater Controller](https://github.com/GeneralUltra758/generic-diesel-heater-controller) - Protocol implementation
 
 ### Technical Specifications
 - [Electronics Weekly: Fuel Metering Pump Operation](https://www.electronicsweekly.com/blogs/engineer-in-wonderland/learning-hard-way-diesel-water-heaters-regulate-fuel-2022-01/)
 - [VVKB Electronic Control Unit](https://www.vvkb.com/electronic-control-unit/)
+- [VVKB Overheat Sensor](https://www.vvkb.com/overheat-sensor/) - Temperature sensor specifications
 - [Dieselheat: Power Consumption](https://www.dieselheat.com.au/faq/air-heating/what-is-the-electrical-power-consumption/)
 - [The Camping Advisor: Amp Usage](https://thecampingadvisor.com/how-many-amps-does-a-diesel-heater-use/)
+- [Portescap: Controlling Brushed DC Motors Using PWM](https://www.portescap.com/en/newsroom/whitepapers/2022/03/controlling-brushed-dc-motors-using-pwm)
 
 ### Troubleshooting and Error Codes
 - [My Rig Adventures: 15 Problems + Error Codes](https://myrigadventures.com/chinese-diesel-heater-problems/)
@@ -481,7 +716,18 @@ Not all heaters use the Blue Wire protocol:
 ## Document Information
 
 - **Created**: January 2026
+- **Last Updated**: January 2026
 - **Purpose**: Technical reference for diesel heater controller replacement design
 - **Status**: Research phase complete; ready for feature planning phase
+
+### Key Findings Summary
+
+| Topic | Key Insight |
+|-------|-------------|
+| Motor architecture | Single motor drives both combustion and cabin fans (coupled) |
+| Control method | Fan speed via PWM; fuel via pulse frequency |
+| Communication | Blue Wire protocol at 25kbps (non-standard) |
+| Flame detection | Inferred from temperature rise, no dedicated sensor |
+| Controller options | Interface-only (safer) vs. full ECU replacement (flexible) |
 
 ---
