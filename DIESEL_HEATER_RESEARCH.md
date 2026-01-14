@@ -379,25 +379,45 @@ Located on the controller or externally in the cabin space.
 ```
 Where T is temperature in Kelvin, R is resistance.
 
-### 6.2 Body/Overheat Sensor (Internal NTC or Thermal Switch)
+### 6.2 Body/Overheat Sensor (Internal NTC Thermistor)
 
 Located inside the heater body, monitoring combustion chamber temperature.
 
-**Specifications:**
-- Type: High-temperature NTC thermistor OR thermal cutoff switch
-- Temperature range: Up to 200-300°C
-- Location: Mounted in ceramic enclosure with aluminum heat spreader
-- Response time: Fast enough to detect flame presence/absence
+**Typical Specifications (VERIFY FOR YOUR SPECIFIC HEATER):**
+- Type: NTC 50K thermistor (glass bead encapsulated for high temp)
+- Resistance at 25°C: 50 kΩ
+- B-value (Beta): 3950K (most common)
+- Tolerance: ±1% to ±2%
+- Operating range: -40°C to +250°C or +300°C
+- Connector: Square connector (standard on Chinese units)
+
+**Resistance-Temperature Relationship (50K NTC, B=3950):**
+
+| Temperature | Approximate Resistance |
+|-------------|----------------------|
+| 25°C | 50.0 kΩ |
+| 50°C | ~19.9 kΩ |
+| 100°C | ~4.2 kΩ |
+| 150°C | ~1.2 kΩ |
+| 200°C | ~430 Ω |
+
+**Construction Types:**
+- **Epoxy coated**: -40°C to +125°C (not suitable for body sensor)
+- **Glass bead encapsulated**: -40°C to +250°C or +300°C (required for combustion chamber)
 
 **Functions:**
 1. **Flame detection** - monitors temperature rise during startup
 2. **Overheat protection** - triggers E05 error if temperature exceeds limit
 3. **Shutdown verification** - confirms combustion chamber has cooled
 
+**Failure Symptom:** If the body sensor fails, the fan will run continuously after shutdown (cannot detect cooling). LCD may show heat bars even when cold.
+
 **Premium Units (e.g., VVKB):**
 - Use German Heraeus temperature sensors
 - STM32 microcontroller monitors for unusual temperature changes
 - Digital signal sent to MCU for precise control
+
+> **NOTE:** Sensor specifications vary between manufacturers and models. Before designing your controller, measure the actual resistance of your heater's body sensor at known temperatures to verify these values.
 
 ### 6.3 Flame Detection Methods
 
@@ -439,10 +459,12 @@ Built into the ECU to monitor supply voltage:
 
 | Sensor | Location | Purpose | Typical Type |
 |--------|----------|---------|--------------|
-| Cabin temp | External/controller | Thermostat feedback | 10K NTC |
-| Body temp | Combustion chamber | Flame detect, overheat | High-temp NTC |
+| Cabin temp | External/controller | Thermostat feedback | 10K NTC, B=3950 |
+| Body temp | Combustion chamber | Flame detect, overheat | 50K NTC, B=3950 (glass bead)* |
 | Voltage | ECU internal | Power monitoring | Resistor divider |
 | (Optional) Altitude | Controller | Auto fuel adjustment | Barometric pressure |
+
+*Values should be verified for your specific heater model
 
 ---
 
